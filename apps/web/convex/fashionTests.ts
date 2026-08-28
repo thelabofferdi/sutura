@@ -177,7 +177,12 @@ export const publish = mutation({ args: { id: v.id("fashionTests") }, handler: a
     validateQuestionDefinition(question);
     if (question.modelId && !models.some(model => model._id === question.modelId)) throw new Error("Une question référence un modèle invalide.");
   }
-  if (test.settings.closesAt !== undefined && test.settings.closesAt <= Date.now()) throw new Error("La date de fermeture doit être dans le futur.");
+  if (test.settings.closesAt !== undefined && test.settings.closesAt <= Date.now()) {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { closesAt, ...rest } = test.settings;
+    await ctx.db.patch(id, { settings: rest as typeof test.settings, updatedAt: Date.now() });
+    test.settings = rest as typeof test.settings;
+  }
   if (test.settings.maxResponses !== undefined && (!Number.isInteger(test.settings.maxResponses) || test.settings.maxResponses < 1)) throw new Error("La limite de réponses est invalide.");
   await ctx.db.patch(id, { status: "published", updatedAt: Date.now() });
   return id;
