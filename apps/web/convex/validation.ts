@@ -27,9 +27,20 @@ export function validateQuestionDefinition(args: { text: string; type: string; o
 
 function hasValue(value: unknown) { return Array.isArray(value) ? value.length > 0 : value !== undefined && value !== null && String(value).trim() !== ""; }
 
+const MAX_TEXT_SHORT = 500;
+const MAX_TEXT_PARAGRAPH = 5000;
+const MAX_ANSWERS_JSON = 50 * 1024;
+
 export function validatePublicSubmission(questions: Question[], settings: Settings, answers: unknown, respondent: unknown, idempotencyKey: string) {
   if (!/^[A-Za-z0-9_-]{8,128}$/.test(idempotencyKey)) fail("Clé de soumission invalide.");
   if (!answers || typeof answers !== "object" || Array.isArray(answers)) fail("Les réponses sont invalides.");
+  // Garde-fou volume global
+  try {
+    const json = JSON.stringify(answers);
+    if (json.length > MAX_ANSWERS_JSON) fail("Réponses trop volumineuses.");
+  } catch {
+    fail("Réponses invalides.");
+  }
   const answerMap = answers as Record<string, unknown>;
   const knownIds = new Set(questions.map(question => String(question._id)));
   if (Object.keys(answerMap).some(id => !knownIds.has(id))) fail("Une question envoyée n'existe pas dans ce test.");
@@ -63,6 +74,16 @@ export function validatePublicSubmission(questions: Question[], settings: Settin
       if (!Number.isFinite(numeric) || (question.min !== undefined && numeric < question.min) || (question.max !== undefined && numeric > question.max)) fail(`Valeur invalide : ${question.text}`);
     } else if (typeof value !== "string") {
       fail(`Réponse invalide : ${question.text}`);
+    }
+    // Limites texte (évite payload anormalement grand)
+    if (typeof value === "string") {
+      const max = question.type === "paragraph" ? MAX_TEXT_PARAGRAPH : question.type === "short_text" ? MAX_TEXT_SHORT : 240;
+      if (value.length > max) fail(`Réponse trop longue : ${question.text}`);
+    }
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        if (typeof entry === "string" && entry.length > 240) fail(`Réponse trop longue : ${question.text}`);
+      }
     }
   }
 }

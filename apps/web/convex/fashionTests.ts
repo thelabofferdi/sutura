@@ -27,9 +27,44 @@ export const create = mutation({ args: { collectionId: v.id("collections"), titl
   await assertOwnedCollection(ctx, args.collectionId, creatorId);
   const title = args.title.trim();
   if (!title) throw new Error("Le titre du test est requis.");
+  if (title.length > 120) throw new Error("Le titre du test est trop long.");
+  if (args.description !== undefined && args.description.trim().length > 2000) throw new Error("La description est trop longue.");
   const base = title.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "test";
   const now = Date.now();
-  return ctx.db.insert("fashionTests", { ...args, title, creatorId, slug: `${base}-${now.toString(36)}`, status: "draft", settings: { anonymousResponses: true, collectRespondentProfile: [], randomizeQuestions: false, requireAllQuestions: false, completionMessage: "Merci, ta réponse a bien été enregistrée." }, createdAt: now, updatedAt: now });
+  return ctx.db.insert("fashionTests", { collectionId: args.collectionId, title, description: args.description?.trim() || undefined, creatorId, slug: `${base}-${now.toString(36)}`, status: "draft", settings: { anonymousResponses: true, collectRespondentProfile: [], randomizeQuestions: false, requireAllQuestions: false, completionMessage: "Merci, ta réponse a bien été enregistrée." }, createdAt: now, updatedAt: now });
+} });
+
+export const update = mutation({ args: { id: v.id("fashionTests"), title: v.optional(v.string()), description: v.optional(v.string()) }, handler: async (ctx, { id, ...patch }) => {
+  const user = await requireUserId(ctx);
+  const test = await assertOwnedTest(ctx, id, user);
+  if (test.status !== "draft") throw new Error("Un test publié ne peut plus être modifié.");
+  const updates: Record<string, unknown> = { updatedAt: Date.now() };
+  if (patch.title !== undefined) {
+    const t = patch.title.trim();
+    if (!t) throw new Error("Le titre du test est requis.");
+    if (t.length > 120) throw new Error("Le titre du test est trop long.");
+    updates.title = t;
+  }
+  if (patch.description !== undefined) {
+    if (patch.description.trim().length > 2000) throw new Error("La description est trop longue.");
+    updates.description = patch.description.trim() || undefined;
+  }
+  await ctx.db.patch(id, updates);
+  return id;
+} });
+
+export const duplicate = mutation({ args: { id: v.id("fashionTests") }, handler: async (ctx, { id }) => {
+  const user = await requireUserId(ctx);
+  const source = await assertOwnedTest(ctx, id, user);
+  const title = `${source.title} (copie)`.slice(0, 120);
+  const base = title.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "test";
+  const now = Date.now();
+  const newTestId = await ctx.db.insert("fashionTests", { collectionId: source.collectionId, title, description: source.description, creatorId: user, slug: `${base}-${now.toString(36)}`, status: "draft", settings: { ...source.settings }, createdAt: now, updatedAt: now });
+  const questions = await ctx.db.query("questions").withIndex("by_test", (q) => q.eq("testId", id)).collect();
+  for (const q of questions.sort((a, b) => a.sortOrder - b.sortOrder)) {
+    await ctx.db.insert("questions", { testId: newTestId, text: q.text, type: q.type, required: q.required, options: [...q.options], min: q.min, max: q.max, helpText: q.helpText, modelId: q.modelId, sortOrder: q.sortOrder });
+  }
+  return newTestId;
 } });
 
 export const updateSettings = mutation({ args: {
@@ -150,7 +185,8 @@ export const publish = mutation({ args: { id: v.id("fashionTests") }, handler: a
 
 export const close = mutation({ args: { id: v.id("fashionTests") }, handler: async (ctx, { id }) => {
   const user = await requireUserId(ctx);
-  await assertOwnedTest(ctx, id, user);
+  const test = await assertOwnedTest(ctx, id, user);
+  if (test.status !== "published") throw new Error("Seul un test publié peut être fermé. Transition attendue : draft -> published -> closed.");
   await ctx.db.patch(id, { status: "closed", updatedAt: Date.now() });
   return id;
 } });
