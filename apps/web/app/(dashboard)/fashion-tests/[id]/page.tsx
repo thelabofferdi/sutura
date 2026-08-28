@@ -212,12 +212,21 @@ function QuestionForm({ testId, question, done }: { testId: Id<"fashionTests">; 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    const payload = { text: String(form.get("text") ?? ""), type, required: form.get("required") === "on", options: options ? String(form.get("options") ?? "").split(/[\n,]+/).map(value => value.trim()).filter(Boolean) : [], min: numeric ? Number(form.get("min")) : undefined, max: numeric ? Number(form.get("max")) : undefined, helpText: String(form.get("helpText") ?? "").trim() || undefined };
+    const rawOptions = String(form.get("options") ?? "");
+    const parsedOptions = options ? rawOptions.split(/[\n,]+/).map(value => value.trim()).filter(Boolean) : [];
+    if (options && parsedOptions.length < 2) { setError("Ajoute au moins 2 options distinctes — ex: Rouge, Noir (sépare par virgule ou saut de ligne)"); return; }
+    if (options && new Set(parsedOptions.map(o => o.toLowerCase())).size !== parsedOptions.length) { setError("Options dupliquées — deux options identiques (casse ignorée)"); return; }
+    const payload = { text: String(form.get("text") ?? ""), type, required: form.get("required") === "on", options: parsedOptions, min: numeric ? Number(form.get("min")) : undefined, max: numeric ? Number(form.get("max")) : undefined, helpText: String(form.get("helpText") ?? "").trim() || undefined };
+    if (numeric && payload.min !== undefined && payload.max !== undefined && payload.min >= payload.max) { setError("La borne minimum doit être inférieure au maximum"); return; }
     try {
       if (question) await update({ testId, questionId: question.id, ...payload });
       else await add({ testId, ...payload });
       done();
-    } catch (cause) { setError(msg(cause)); }
+    } catch (cause) {
+      const m = msg(cause);
+      if (m.includes("deux options distinctes")) setError("Ajoute au moins 2 options distinctes — ex: Rouge, Noir");
+      else setError(m);
+    }
   }
 
   return <form onSubmit={submit} className="space-y-4"><h2 className="display-font text-2xl">{question ? "Modifier la question" : "Nouvelle question"}</h2><TextAreaField label="Question" name="text" required placeholder="Ex: Quelle couleur préférez-vous ?" defaultValue={question?.text} /><select value={type} onChange={event => setType(event.target.value as QuestionType)} className="w-full rounded-[14px] border border-line bg-canvas px-4 py-3 text-sm"><option value="single_choice">Choix unique</option><option value="multiple_choice">Choix multiple</option><option value="rating">Note /5</option><option value="yes_no">Oui / non</option><option value="price">Prix</option><option value="short_text">Réponse courte</option><option value="paragraph">Texte long</option><option value="ranking">Classement</option><option value="scale">Échelle</option></select>{options && <TextAreaField label="Options" name="options" required hint="une par ligne ou par virgule" placeholder={"Rouge\nNoir\nBeige"} defaultValue={question?.options.join("\n")} />}{numeric && <div className="grid grid-cols-2 gap-4"><TextField label="Minimum" name="min" type="number" required defaultValue={question?.min} /><TextField label="Maximum" name="max" type="number" required defaultValue={question?.max} /></div>}<TextField label="Aide" name="helpText" optional placeholder="Ex: Choisis ce qui attire ton regard" defaultValue={question?.helpText} /><label className="flex items-center gap-2 text-sm"><input type="checkbox" name="required" defaultChecked={question?.required ?? true} className="accent-framboise" /> Obligatoire</label>{error && <p role="alert" className="rounded-[12px] bg-error/10 px-3 py-2 text-sm text-error">{error}</p>}<Button className="w-full">{question ? "Enregistrer" : "Ajouter"}</Button></form>;
