@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { type FormEvent, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
-import { BarChart3, ChevronDown, ChevronLeft, ChevronUp, ExternalLink, Plus, Send, Sparkles, Trash2, XCircle } from "lucide-react";
+import { BarChart3, ChevronDown, ChevronLeft, ChevronUp, ExternalLink, Plus, Send, Sparkles, Trash2, XCircle, AlertCircle } from "lucide-react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
@@ -45,12 +45,16 @@ export default function Page() {
   const [editing, setEditing] = useState<EditableQuestion | undefined>();
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState("");
+  const [showSettings, setShowSettings] = useState(false);
 
-  if (test === undefined) return <p>Chargement…</p>;
-  if (!test) return <p>Test introuvable.</p>;
+  if (test === undefined) return <p className="p-8 text-center text-prune/60">Chargement…</p>;
+  if (!test) return <p className="p-8 text-center text-error">Test introuvable.</p>;
 
   const draft = test.status === "draft";
   const questions = test.questions as EditableQuestion[];
+  const canPublish = test.modelsCount > 0 && questions.length > 0;
+  const publishDisabledReason = !canPublish ? `Ajoute ${test.modelsCount === 0 ? "un modèle" : ""}${test.modelsCount === 0 && questions.length === 0 ? " et " : ""}${questions.length === 0 ? "une question" : ""} avant de publier.` : undefined;
+
   const moveQuestion = async (index: number, direction: -1 | 1) => {
     const target = index + direction;
     if (target < 0 || target >= questions.length) return;
@@ -63,36 +67,81 @@ export default function Page() {
     }
   };
 
+  const handlePublish = async () => {
+    setError("");
+    if (!canPublish) {
+      setError(publishDisabledReason ?? "Ajoutez au moins un modèle et une question.");
+      return;
+    }
+    try {
+      await publish({ id });
+    } catch (cause) {
+      const message = msg(cause);
+      if (message.includes("date de fermeture")) setError("La date de fermeture est passée. Corrige-la dans Réglages avant de publier.");
+      else setError(message);
+    }
+  };
+
   return (
-    <div className="mx-auto max-w-3xl space-y-8">
-      <Link href="/fashion-tests" className="inline-flex gap-2"><ChevronLeft />Tests</Link>
-      <header className="rounded-[24px] bg-prune p-7 text-white">
+    <div className="mx-auto max-w-3xl space-y-6">
+      <Link href="/fashion-tests" className="inline-flex items-center gap-1.5 text-sm font-medium text-prune/60 hover:text-prune"><ChevronLeft className="h-4 w-4" />Tests</Link>
+      
+      <header className="rounded-[24px] bg-prune p-6 text-white sm:p-7">
         <p className="t-eyebrow text-jaune">{draft ? "Brouillon" : test.status === "published" ? "En collecte" : "Fermé"}</p>
-        <h1 className="display-font mt-3 text-5xl">{test.title}</h1>
-        <div className="mt-7 flex flex-wrap gap-3">
-          {draft ? <button onClick={() => publish({ id }).catch(cause => setError(msg(cause)))} className="inline-flex gap-2 bg-framboise p-3"><Send />Publier</button> : test.status === "published" ? <><Link href={`/s/${test.slug}`} className="inline-flex gap-2 bg-white p-3 text-prune"><ExternalLink />Lien public</Link><button onClick={() => close({ id }).catch(cause => setError(msg(cause)))} className="inline-flex gap-2"><XCircle />Fermer</button></> : null}
-          <Link href={`/analytics/${id}`} className="inline-flex gap-2"><BarChart3 />Analyses</Link>
+        <h1 className="display-font mt-3 text-4xl leading-none sm:text-5xl">{test.title}</h1>
+        {test.description && <p className="mt-3 max-w-xl text-sm leading-6 text-white/70">{test.description}</p>}
+        <div className="mt-6 flex flex-wrap items-center gap-3">
+          {draft ? (
+            <button onClick={handlePublish} disabled={!canPublish} title={publishDisabledReason} className="inline-flex items-center gap-2 rounded-full bg-framboise px-5 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-framboise-fonce disabled:opacity-40 disabled:cursor-not-allowed"><Send className="h-4 w-4" />Publier</button>
+          ) : test.status === "published" ? (
+            <>
+              <Link href={`/s/${test.slug}`} className="inline-flex items-center gap-2 rounded-full bg-white px-5 py-2.5 text-sm font-bold text-prune"><ExternalLink className="h-4 w-4" />Lien public</Link>
+              <button onClick={() => close({ id }).catch(cause => setError(msg(cause)))} className="inline-flex items-center gap-2 rounded-full border border-white/20 px-5 py-2.5 text-sm font-semibold text-white hover:bg-white/10"><XCircle className="h-4 w-4" />Fermer</button>
+            </>
+          ) : null}
+          <Link href={`/analytics/${id}`} className="inline-flex items-center gap-2 rounded-full bg-white/10 px-5 py-2.5 text-sm font-semibold text-white hover:bg-white/15"><BarChart3 className="h-4 w-4" />Analyses</Link>
         </div>
+        {!canPublish && draft && <p className="mt-3 flex items-center gap-1.5 text-xs text-jaune"><AlertCircle className="h-3.5 w-3.5" />{publishDisabledReason}</p>}
       </header>
 
-      {error && <p className="text-error">{error}</p>}
+      {error && <div role="alert" className="flex gap-3 rounded-[16px] border border-error/20 bg-error/5 px-4 py-3 text-sm text-error"><AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /><span>{error}</span></div>}
 
-      <section>
-        <div className="mb-4 flex justify-between">
-          <div><h2 className="font-bold">Questions</h2><small>{questions.length} questions</small></div>
-          {draft && <button onClick={() => setAdding(true)} className="inline-flex gap-2 text-framboise"><Plus />Ajouter</button>}
+      <section className="rounded-[20px] border border-line bg-white p-5">
+        <div className="flex items-center justify-between">
+          <div><h2 className="text-base font-semibold text-prune">Questions</h2><p className="text-xs text-prune/50">{questions.length} question{questions.length !== 1 ? "s" : ""}</p></div>
+          {draft && <button onClick={() => setAdding(true)} className="inline-flex items-center gap-1.5 rounded-full bg-canvas px-3 py-1.5 text-xs font-bold text-framboise hover:bg-rose-pale"><Plus className="h-3.5 w-3.5" />Ajouter</button>}
         </div>
-        <div className="space-y-3">
-          {questions.map((question, index) => <article key={question.id} className="flex gap-4 rounded-[18px] border border-line bg-white p-5">
-            <span className="display-font text-2xl text-framboise">{index + 1}</span>
-            <div className="flex-1"><button disabled={!draft} onClick={() => setEditing(question)} className="text-left disabled:cursor-default"><b>{question.text}</b><small className="block">{types.find(type => type.value === question.type)?.label ?? question.type} · {question.required ? "obligatoire" : "facultative"}</small>{question.helpText && <small className="mt-1 block text-muted">{question.helpText}</small>}</button></div>
-            {draft && <div className="flex items-start gap-1"><button aria-label="Monter la question" disabled={index === 0} onClick={() => moveQuestion(index, -1)}><ChevronUp /></button><button aria-label="Descendre la question" disabled={index === questions.length - 1} onClick={() => moveQuestion(index, 1)}><ChevronDown /></button><button aria-label="Modifier la question" onClick={() => setEditing(question)}><Sparkles /></button><button aria-label="Supprimer la question" onClick={() => remove({ testId: id, questionId: question.id }).catch(cause => setError(msg(cause)))}><Trash2 /></button></div>}
-          </article>)}
-        </div>
+        {questions.length === 0 ? (
+          <div className="mt-6 rounded-[16px] border border-dashed border-line bg-canvas/50 px-6 py-10 text-center">
+            <p className="text-sm font-medium text-prune">Aucune question</p>
+            <p className="mt-1 text-xs text-prune/50">Ajoute une question pour pouvoir publier.</p>
+            {draft && <button onClick={() => setAdding(true)} className="mt-4 inline-flex items-center gap-1.5 rounded-full bg-framboise px-4 py-2 text-xs font-bold text-white"><Plus className="h-3.5 w-3.5" />Première question</button>}
+          </div>
+        ) : (
+          <div className="mt-5 space-y-2">
+            {questions.map((question, index) => (
+              <article key={question.id} className="flex gap-3 rounded-[16px] border border-line bg-canvas/30 p-4 transition hover:bg-white">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-prune text-xs font-bold text-white">{index + 1}</span>
+                <div className="min-w-0 flex-1"><button disabled={!draft} onClick={() => setEditing(question)} className="w-full text-left disabled:cursor-default"><p className="truncate text-sm font-semibold text-prune">{question.text}</p><p className="mt-1 text-xs text-prune/50">{types.find(t => t.value === question.type)?.label} · {question.required ? "obligatoire" : "facultative"}</p></button></div>
+                {draft && <div className="flex items-center gap-1"><button aria-label="Monter" disabled={index === 0} onClick={() => moveQuestion(index, -1)} className="rounded-full p-1.5 text-prune/40 hover:bg-canvas hover:text-prune disabled:opacity-20"><ChevronUp className="h-4 w-4" /></button><button aria-label="Descendre" disabled={index === questions.length - 1} onClick={() => moveQuestion(index, 1)} className="rounded-full p-1.5 text-prune/40 hover:bg-canvas hover:text-prune disabled:opacity-20"><ChevronDown className="h-4 w-4" /></button><button aria-label="Modifier" onClick={() => setEditing(question)} className="rounded-full p-1.5 text-prune/40 hover:bg-canvas hover:text-prune"><Sparkles className="h-3.5 w-3.5" /></button><button aria-label="Supprimer" onClick={() => remove({ testId: id, questionId: question.id }).catch(cause => setError(msg(cause)))} className="rounded-full p-1.5 text-error/60 hover:bg-error/10 hover:text-error"><Trash2 className="h-4 w-4" /></button></div>}
+              </article>
+            ))}
+          </div>
+        )}
       </section>
 
-      {draft && <TestSettings testId={id} settings={test.settings} onError={setError} />}
-      <section className="rounded-[20px] bg-rose-clair p-6"><p className="flex gap-2"><Sparkles />Checklist</p><p>{test.modelsCount > 0 ? "✓" : "○"} Un modèle · {questions.length > 0 ? "✓" : "○"} Une question</p></section>
+      {draft && (
+        <section className="rounded-[20px] border border-line bg-white">
+          <button onClick={() => setShowSettings(!showSettings)} className="flex w-full items-center justify-between p-5 text-left">
+            <div><h2 className="text-sm font-semibold text-prune">Réglages</h2><p className="text-xs text-prune/50">Collecte, fermeture et message de fin</p></div>
+            <ChevronDown className={`h-4 w-4 text-prune/40 transition ${showSettings ? "rotate-180" : ""}`} />
+          </button>
+          {showSettings && <div className="border-t border-line p-5"><TestSettings testId={id} settings={test.settings} onError={setError} /></div>}
+        </section>
+      )}
+
+      <div className="flex items-center gap-2 rounded-full bg-canvas px-4 py-2 text-xs font-medium text-prune/60"><Sparkles className="h-3.5 w-3.5 text-framboise" />{test.modelsCount > 0 ? "✓" : "○"} Modèle · {questions.length > 0 ? "✓" : "○"} Question {canPublish ? "— prêt à publier" : ""}</div>
+
       {adding && <Modal close={() => setAdding(false)}><QuestionForm testId={id} done={() => setAdding(false)} /></Modal>}
       {editing && <Modal close={() => setEditing(undefined)}><QuestionForm testId={id} question={editing} done={() => setEditing(undefined)} /></Modal>}
     </div>
@@ -112,27 +161,40 @@ type TestSettingsValue = {
 function TestSettings({ testId, settings, onError }: { testId: Id<"fashionTests">; settings: TestSettingsValue; onError: (message: string) => void }) {
   const update = useMutation(api.fashionTests.updateSettings);
   const profileFields = ["firstName", "city", "country", "email"];
+  // eslint-disable-next-line
+  const minDate = new Date(Date.now() + 60 * 60 * 1000).toISOString().slice(0, 16);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    const closesAt = String(form.get("closesAt") ?? "");
+    const closesAtRaw = String(form.get("closesAt") ?? "");
+    if (closesAtRaw) {
+      const closesAtMs = new Date(closesAtRaw).getTime();
+      // eslint-disable-next-line
+      if (closesAtMs <= Date.now()) {
+        onError("La date de fermeture doit être dans le futur. Choisis une date à venir.");
+        return;
+      }
+    }
     const selectedProfile = profileFields.filter(field => form.get(`profile-${field}`) === "on");
     try {
       await update({
         id: testId,
         maxResponses: String(form.get("maxResponses") ?? "") ? Number(form.get("maxResponses")) : null,
-        closesAt: closesAt ? new Date(closesAt).getTime() : null,
+        closesAt: closesAtRaw ? new Date(closesAtRaw).getTime() : null,
         anonymousResponses: form.get("anonymousResponses") === "on",
         collectRespondentProfile: selectedProfile,
         randomizeQuestions: form.get("randomizeQuestions") === "on",
         requireAllQuestions: form.get("requireAllQuestions") === "on",
         completionMessage: String(form.get("completionMessage") ?? ""),
       });
+      onError("");
     } catch (cause) {
-      onError(msg(cause));
+      const m = msg(cause);
+      if (m.includes("date de fermeture")) onError("La date de fermeture est passée. Choisis une date future (au moins +1h).");
+      else onError(m);
     }
   }
-  return <section className="rounded-[20px] border border-line bg-white p-6"><div className="mb-5"><h2 className="font-bold">Réglages du test</h2><p className="text-muted">Configurez la collecte avant de publier.</p></div><form onSubmit={submit} className="space-y-5"><div className="grid gap-4 sm:grid-cols-2"><TextField label="Nombre maximum de réponses" name="maxResponses" type="number" min="1" optional defaultValue={settings.maxResponses} /><TextField label="Fermeture" name="closesAt" type="datetime-local" optional defaultValue={settings.closesAt?.slice(0, 16)} /></div><label className="flex gap-3"><input type="checkbox" name="anonymousResponses" defaultChecked={settings.anonymousResponses} /> Réponses anonymes</label><fieldset className="space-y-2"><legend className="font-semibold">Profil répondant</legend>{profileFields.map(field => <label key={field} className="mr-4 inline-flex gap-2"><input type="checkbox" name={`profile-${field}`} defaultChecked={settings.collectRespondentProfile.includes(field)} /> {field}</label>)}</fieldset><label className="flex gap-3"><input type="checkbox" name="randomizeQuestions" defaultChecked={settings.randomizeQuestions} /> Mélanger les questions</label><label className="flex gap-3"><input type="checkbox" name="requireAllQuestions" defaultChecked={settings.requireAllQuestions} /> Rendre toutes les questions obligatoires</label><TextAreaField label="Message de fin" name="completionMessage" required defaultValue={settings.completionMessage} /><Button type="submit">Enregistrer les réglages</Button></form></section>;
+  return <form onSubmit={submit} className="space-y-5"><div className="grid gap-4 sm:grid-cols-2"><TextField label="Limite de réponses" name="maxResponses" type="number" min="1" hint="vide = illimité" optional defaultValue={settings.maxResponses} /><TextField label="Fermeture" name="closesAt" type="datetime-local" hint="vide = jamais" optional min={minDate} defaultValue={settings.closesAt?.slice(0, 16)} /></div><label className="flex items-center gap-2.5 rounded-[12px] bg-canvas px-3 py-2.5 text-sm"><input type="checkbox" name="anonymousResponses" defaultChecked={settings.anonymousResponses} className="accent-framboise" /> Réponses anonymes</label><fieldset className="rounded-[12px] border border-line p-3"><legend className="px-1 text-xs font-semibold text-prune/70">Profil répondant (si non anonyme)</legend><div className="flex flex-wrap gap-3">{profileFields.map(field => <label key={field} className="inline-flex items-center gap-1.5 text-xs"><input type="checkbox" name={`profile-${field}`} defaultChecked={settings.collectRespondentProfile.includes(field)} className="accent-framboise" /> {field}</label>)}</div></fieldset><label className="flex items-center gap-2 text-xs"><input type="checkbox" name="randomizeQuestions" defaultChecked={settings.randomizeQuestions} className="accent-framboise" /> Mélanger les questions</label><label className="flex items-center gap-2 text-xs"><input type="checkbox" name="requireAllQuestions" defaultChecked={settings.requireAllQuestions} className="accent-framboise" /> Toutes les questions obligatoires</label><TextAreaField label="Message de fin" name="completionMessage" required defaultValue={settings.completionMessage} /><Button type="submit" className="w-full">Enregistrer les réglages</Button></form>;
 }
 
 function QuestionForm({ testId, question, done }: { testId: Id<"fashionTests">; question?: EditableQuestion; done: () => void }) {
@@ -154,8 +216,8 @@ function QuestionForm({ testId, question, done }: { testId: Id<"fashionTests">; 
     } catch (cause) { setError(msg(cause)); }
   }
 
-  return <form onSubmit={submit} className="space-y-5"><h2 className="display-font text-3xl">{question ? "Modifier la question" : "Nouvelle question"}</h2><TextAreaField label="Question" name="text" required defaultValue={question?.text} /><select value={type} onChange={event => setType(event.target.value as QuestionType)} className="mt-2 w-full rounded-[14px] border border-line bg-canvas px-4 py-3 text-sm">{types.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select>{options && <TextAreaField label="Options" name="options" required hint="une par ligne ou séparées par virgule" placeholder={"Rouge\nNoir\nBeige"} defaultValue={question?.options.join("\n")} />}{numeric && <div className="grid grid-cols-2 gap-4"><TextField label="Minimum" name="min" type="number" required defaultValue={question?.min} /><TextField label="Maximum" name="max" type="number" required defaultValue={question?.max} /></div>}<TextField label="Aide" name="helpText" optional defaultValue={question?.helpText} /><label className="flex items-center gap-2 text-sm"><input type="checkbox" name="required" defaultChecked={question?.required ?? true} /> Obligatoire</label>{error && <p className="rounded-[12px] bg-error/10 px-3 py-2 text-sm text-error">{error}</p>}<Button className="w-full">{question ? "Enregistrer" : "Ajouter"}</Button></form>;
+  return <form onSubmit={submit} className="space-y-4"><h2 className="display-font text-2xl">{question ? "Modifier la question" : "Nouvelle question"}</h2><TextAreaField label="Question" name="text" required placeholder="Ex: Quelle couleur préférez-vous ?" defaultValue={question?.text} /><select value={type} onChange={event => setType(event.target.value as QuestionType)} className="w-full rounded-[14px] border border-line bg-canvas px-4 py-3 text-sm"><option value="single_choice">Choix unique</option><option value="multiple_choice">Choix multiple</option><option value="rating">Note /5</option><option value="yes_no">Oui / non</option><option value="price">Prix</option><option value="short_text">Réponse courte</option><option value="paragraph">Texte long</option><option value="ranking">Classement</option><option value="scale">Échelle</option></select>{options && <TextAreaField label="Options" name="options" required hint="une par ligne ou par virgule" placeholder={"Rouge\nNoir\nBeige"} defaultValue={question?.options.join("\n")} />}{numeric && <div className="grid grid-cols-2 gap-4"><TextField label="Minimum" name="min" type="number" required defaultValue={question?.min} /><TextField label="Maximum" name="max" type="number" required defaultValue={question?.max} /></div>}<TextField label="Aide" name="helpText" optional placeholder="Ex: Choisis ce qui attire ton regard" defaultValue={question?.helpText} /><label className="flex items-center gap-2 text-sm"><input type="checkbox" name="required" defaultChecked={question?.required ?? true} className="accent-framboise" /> Obligatoire</label>{error && <p role="alert" className="rounded-[12px] bg-error/10 px-3 py-2 text-sm text-error">{error}</p>}<Button className="w-full">{question ? "Enregistrer" : "Ajouter"}</Button></form>;
 }
 
-function Modal({ children, close }: { children: React.ReactNode; close: () => void }) { return <div className="fixed inset-0 z-50 grid place-items-center bg-prune/50 p-4" onMouseDown={event => event.target === event.currentTarget && close()}><div className="w-full max-w-lg rounded-[24px] bg-white p-6">{children}</div></div>; }
+function Modal({ children, close }: { children: React.ReactNode; close: () => void }) { return <div className="fixed inset-0 z-50 grid place-items-center bg-prune/50 p-3 sm:p-4" onMouseDown={event => event.target === event.currentTarget && close()}><div className="w-full max-w-lg rounded-[24px] bg-white p-5 sm:p-6 shadow-xl">{children}</div></div>; }
 function msg(error: unknown) { return error instanceof Error ? error.message : "Erreur."; }
