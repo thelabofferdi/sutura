@@ -28,7 +28,17 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
     try {
       const email = String(form.get("email")); const password = String(form.get("password"));
       await signIn("password", { email, password, flow: login ? "signIn" : "signUp" });
-      if (!login) await upsertProfile({ name: String(form.get("name")), brandName: String(form.get("brandName")), city: String(form.get("city") || "") || undefined, country: String(form.get("country") || "") || undefined });
+      if (!login) {
+        const profile = { name: String(form.get("name")), brandName: String(form.get("brandName")), city: String(form.get("city") || "") || undefined, country: String(form.get("country") || "") || undefined };
+        try {
+          await upsertProfile(profile);
+        } catch (cause) {
+          if (cause instanceof Error && cause.message.includes("connecté")) {
+            await new Promise((resolve) => setTimeout(resolve, 800));
+            await upsertProfile(profile);
+          } else throw cause;
+        }
+      }
       router.push("/dashboard");
     } catch {
       setError(login ? "Email ou mot de passe incorrect. Réessaie." : "Impossible de créer ton espace. Vérifie tes informations.");
