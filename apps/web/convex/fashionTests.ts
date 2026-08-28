@@ -67,6 +67,27 @@ export const duplicate = mutation({ args: { id: v.id("fashionTests") }, handler:
   return newTestId;
 } });
 
+export const generateQuestions = mutation({ args: { testId: v.id("fashionTests") }, handler: async (ctx, { testId }) => {
+  const user = await requireUserId(ctx);
+  const test = await assertOwnedTest(ctx, testId, user);
+  if (test.status !== "draft") throw new Error("Seul un brouillon peut générer des questions.");
+  const existing = await ctx.db.query("questions").withIndex("by_test", (q) => q.eq("testId", testId)).collect();
+  if (existing.length) throw new Error("Des questions existent déjà. Supprime-les d'abord.");
+  const models = await ctx.db.query("models").withIndex("by_collection", (q) => q.eq("collectionId", test.collectionId)).collect();
+  if (!models.length) throw new Error("Ajoutez un modèle d'abord.");
+  const base: Array<{ text: string; type: string; required: boolean; options: string[]; min?: number; max?: number; helpText?: string; modelId?: Id<"models"> }> = [
+    { text: `Parmi ces ${models.length} modèles, lequel attire le plus ton regard ?`, type: "single_choice", required: true, options: models.map((m) => m.name), helpText: "Une seule réponse." },
+    { text: "Comment notes-tu l'attrait global de cette collection ?", type: "rating", required: true, options: [], min: 1, max: 5, helpText: "1 = peu, 5 = beaucoup" },
+    { text: "À quel prix cette pièce te semble juste ?", type: "price", required: false, options: [], min: 5000, max: 150000, helpText: "En FCFA", modelId: models[0]._id },
+  ];
+  for (let i = 0; i < base.length; i++) {
+    const q = base[i];
+    const validated = validateQuestionDefinition(q as Parameters<typeof validateQuestionDefinition>[0]);
+    await ctx.db.insert("questions", { testId, text: validated.text, type: q.type, required: q.required, options: validated.options, min: validated.min, max: validated.max, helpText: q.helpText, modelId: q.modelId, sortOrder: i });
+  }
+  return testId;
+} });
+
 export const updateSettings = mutation({ args: {
   id: v.id("fashionTests"),
   maxResponses: v.optional(v.union(v.number(), v.null())),

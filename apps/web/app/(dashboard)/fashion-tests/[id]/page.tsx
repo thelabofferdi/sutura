@@ -1,10 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { type FormEvent, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
-import { BarChart3, ChevronDown, ChevronLeft, ChevronUp, ExternalLink, Plus, Send, Sparkles, Trash2, XCircle, AlertCircle } from "lucide-react";
+import { BarChart3, ChevronDown, ChevronLeft, ChevronUp, Copy, ExternalLink, Plus, Send, Sparkles, Trash2, XCircle, AlertCircle } from "lucide-react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
@@ -36,12 +36,15 @@ type EditableQuestion = {
 
 export default function Page() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const id = (Array.isArray(params.id) ? params.id[0] : params.id) as Id<"fashionTests">;
   const test = useQuery(api.fashionTests.get, { id });
   const publish = useMutation(api.fashionTests.publish);
   const close = useMutation(api.fashionTests.close);
+  const duplicate = useMutation(api.fashionTests.duplicate);
   const remove = useMutation(api.fashionTests.removeQuestion);
   const reorder = useMutation(api.fashionTests.reorderQuestions);
+  const generate = useMutation(api.fashionTests.generateQuestions);
   const [editing, setEditing] = useState<EditableQuestion | undefined>();
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState("");
@@ -100,6 +103,7 @@ export default function Page() {
             </>
           ) : null}
           <Link href={`/analytics/${id}`} className="inline-flex items-center gap-2 rounded-full bg-white/10 px-5 py-2.5 text-sm font-semibold text-white hover:bg-white/15"><BarChart3 className="h-4 w-4" />Analyses</Link>
+          <button onClick={async () => { try { const nid = await duplicate({ id }); router.push(`/fashion-tests/${nid}`); } catch (cause) { setError(msg(cause)); } }} className="inline-flex items-center gap-2 rounded-full border border-white/20 px-4 py-2.5 text-xs font-semibold text-white hover:bg-white/10"><Copy className="h-3.5 w-3.5" />Dupliquer</button>
         </div>
         {!canPublish && draft && <p className="mt-3 flex items-center gap-1.5 text-xs text-jaune"><AlertCircle className="h-3.5 w-3.5" />{publishDisabledReason}</p>}
       </header>
@@ -115,7 +119,7 @@ export default function Page() {
           <div className="mt-6 rounded-[16px] border border-dashed border-line bg-canvas/50 px-6 py-10 text-center">
             <p className="text-sm font-medium text-prune">Aucune question</p>
             <p className="mt-1 text-xs text-prune/50">Ajoute une question pour pouvoir publier.</p>
-            {draft && <button onClick={() => setAdding(true)} className="mt-4 inline-flex items-center gap-1.5 rounded-full bg-framboise px-4 py-2 text-xs font-bold text-white"><Plus className="h-3.5 w-3.5" />Première question</button>}
+            {draft && <div className="mt-4 flex justify-center gap-2"><button onClick={() => setAdding(true)} className="inline-flex items-center gap-1.5 rounded-full bg-framboise px-4 py-2 text-xs font-bold text-white"><Plus className="h-3.5 w-3.5" />Première question</button><button onClick={() => generate({ testId: id }).catch(cause => setError(msg(cause)))} className="inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-4 py-2 text-xs font-bold text-prune hover:bg-canvas"><Sparkles className="h-3.5 w-3.5" />Générer 3 questions</button></div>}
           </div>
         ) : (
           <div className="mt-5 space-y-2">

@@ -56,38 +56,45 @@ export const generate = action({
     let recommendations = localRecommendations(data.responseCount);
     const key = process.env.IMOLE_API_KEY;
     if (key) {
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 15000);
-        const response = await fetch(`${process.env.IMOLE_BASE_URL ?? "https://api.imole.app/v1"}/responses`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model: process.env.IMOLE_MODEL ?? "gpt-5.6-luna",
-            input: [
-              { role: "system", content: "Tu aides un créateur de mode. Réponds uniquement en JSON conforme au schéma, avec des conseils prudents fondés sur les données." },
-              { role: "user", content: JSON.stringify({ test: data.test, responseCount: data.responseCount, answerSummary: data.answerSummary }) },
-            ],
-            reasoning: { effort: "medium" },
-            text: { format: { type: "json_schema", name: "sutura_recommendations", strict: true, schema: {
-              type: "object", additionalProperties: false, required: ["recommendations"], properties: {
-                recommendations: { type: "array", minItems: 1, maxItems: 10, items: { type: "object", additionalProperties: false, required: ["priority", "category", "message"], properties: {
-                  priority: { enum: ["high", "medium", "low"] }, category: { enum: ["production", "pricing", "audience", "content", "risk"] }, message: { type: "string" }, rationale: { type: "string" },
-                } } },
-              },
-            } } },
-          }),
-          signal: controller.signal,
-        });
-        clearTimeout(timeout);
-        if (!response.ok) throw new Error(`Imọlẹ ${response.status}`);
-        const payload = await response.json();
-        const text = payload.output_text ?? payload.output?.flatMap((item: { content?: Array<{ type: string; text?: string }> }) => item.content ?? []).find((item: { type: string }) => item.type === "output_text")?.text;
-        const parsed = parseRecommendations(JSON.parse(text));
-        if (parsed) { recommendations = parsed; provider = "imole"; }
-      } catch (error) {
-        console.error("Imọlẹ fallback", error);
+      let lastError: unknown = null;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 15000);
+          const response = await fetch(`${process.env.IMOLE_BASE_URL ?? "https://api.imole.app/v1"}/responses`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: process.env.IMOLE_MODEL ?? "gpt-5.6-luna",
+              input: [
+                { role: "system", content: "Tu aides un créateur de mode. Réponds uniquement en JSON conforme au schéma, avec des conseils prudents fondés sur les données." },
+                { role: "user", content: JSON.stringify({ test: data.test, responseCount: data.responseCount, answerSummary: data.answerSummary }) },
+              ],
+              reasoning: { effort: "medium" },
+              text: { format: { type: "json_schema", name: "sutura_recommendations", strict: true, schema: {
+                type: "object", additionalProperties: false, required: ["recommendations"], properties: {
+                  recommendations: { type: "array", minItems: 1, maxItems: 10, items: { type: "object", additionalProperties: false, required: ["priority", "category", "message"], properties: {
+                    priority: { enum: ["high", "medium", "low"] }, category: { enum: ["production", "pricing", "audience", "content", "risk"] }, message: { type: "string" }, rationale: { type: "string" },
+                  } } },
+                },
+              } } },
+            }),
+            signal: controller.signal,
+          });
+          clearTimeout(timeout);
+          if (!response.ok) throw new Error(`Imọlẹ ${response.status}`);
+          const payload = await response.json();
+          const text = payload.output_text ?? payload.output?.flatMap((item: { content?: Array<{ type: string; text?: string }> }) => item.content ?? []).find((item: { type: string }) => item.type === "output_text")?.text;
+          const parsed = parseRecommendations(JSON.parse(text));
+          if (parsed) { recommendations = parsed; provider = "imole"; break; }
+          else throw new Error("Imọlẹ parsing échoué");
+        } catch (error) {
+          lastError = error;
+          console.error(`Imọlẹ tentative ${attempt + 1} échouée`, error);
+          if (attempt < 1) await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
+        }
       }
+      if (provider === "local" && lastError) console.error("Imọlẹ fallback définitif", lastError);
     }
     const dataPolicy = "Seuls le texte du test et des statistiques agrégées sont transmis au moteur IA; aucune identité ni réponse libre de répondant n'est envoyée.";
     await ctx.runMutation(internal.recommendationStore.save, { testId: args.testId, creatorId, responseCount: data.responseCount, provider, dataPolicy, recommendations });

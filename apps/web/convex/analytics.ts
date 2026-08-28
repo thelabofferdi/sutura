@@ -6,10 +6,11 @@ export const get = query({
   args: { testId: v.id("fashionTests") },
   handler: async (ctx, { testId }) => {
     const user = await requireUserId(ctx);
-    await assertOwnedTest(ctx, testId, user);
+    const test = await assertOwnedTest(ctx, testId, user);
     const questions = (await ctx.db.query("questions").withIndex("by_test", (q) => q.eq("testId", testId)).collect()).sort((a, b) => a.sortOrder - b.sortOrder);
     const responses = await ctx.db.query("publicResponses").withIndex("by_test", (q) => q.eq("testId", testId)).collect();
     const shares = await ctx.db.query("shareEvents").withIndex("by_test", (q) => q.eq("testId", testId)).collect();
+    const models = await ctx.db.query("models").withIndex("by_collection", (q) => q.eq("collectionId", test.collectionId)).collect();
 
     const breakdown = questions.map((question) => {
       const values = responses
@@ -45,6 +46,14 @@ export const get = query({
     const sharesByChannel: Record<string, number> = {};
     for (const share of shares) sharesByChannel[share.channel] = (sharesByChannel[share.channel] ?? 0) + 1;
 
+    const modelBreakdown = models.map((model) => {
+      const linked = questions.filter((q) => String(q.modelId) === String(model._id));
+      const withAnswer = responses.filter((r) => linked.some((q) => (r.answers as Record<string, unknown>)[String(q._id)] !== undefined)).length;
+      return { modelId: String(model._id), name: model.name, questionsCount: linked.length, responsesWithAnswer: withAnswer, answerRate: responses.length ? Math.round(withAnswer / responses.length * 100) : 0 };
+    });
+    const funnel = questions.map((q, i) => ({ questionId: String(q._id), text: q.text, answerCount: breakdown[i].answersCount, answerRate: responses.length ? Math.round(breakdown[i].answersCount / responses.length * 100) : 0 }));
+    const abandonmentRate = funnel.length && responses.length ? Math.round((1 - funnel[funnel.length - 1].answerRate / 100) * 100) : null;
+
     return {
       testId: String(testId),
       executiveSummary: responses.length ? `${responses.length} réponse${responses.length > 1 ? "s" : ""} analysée${responses.length > 1 ? "s" : ""}. Les scores reflètent uniquement les données réellement collectées.` : "Aucune réponse reçue pour le moment.",
@@ -57,11 +66,11 @@ export const get = query({
       averageResponseSeconds: averageSeconds,
       shares: shares.length,
       sharesByChannel,
-      abandonmentRate: null,
+      abandonmentRate,
       trafficMeasurementStatus: "Les visites anonymes ne sont pas mesurées. Partage et réponses sont comptés ; les visiteurs ne sont pas dédupliqués.",
       demographics: { cities: {}, countries: {}, sex: {}, averageAge: 0 },
-      modelBreakdown: [],
-      funnel: questions.map((q, i) => ({ questionId: String(q._id), text: q.text, answerCount: breakdown[i].answersCount, answerRate: responses.length ? Math.round(breakdown[i].answersCount / responses.length * 100) : 0 })),
+      modelBreakdown,
+      funnel,
       priceDistribution: Object.entries(price).map(([label, count]) => ({ label, count })),
       questionBreakdown: breakdown,
     };
