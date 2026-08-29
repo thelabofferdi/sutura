@@ -71,12 +71,16 @@ apps/web/
 
 Variables principales :
 
-- `NEXT_PUBLIC_CONVEX_URL` — URL Convex utilisée par le navigateur ;
+- `NEXT_PUBLIC_CONVEX_URL` — URL Convex utilisée par le navigateur (Vercel) ;
 - `CONVEX_DEPLOYMENT` — déploiement local/dev, renseigné par la CLI ;
-- `CONVEX_SITE_URL` — URL du site utilisée par Convex Auth ;
-- `IMOLE_BASE_URL`, `IMOLE_API_KEY`, `IMOLE_MODEL` — configuration IA côté déploiement Convex uniquement.
+- `CONVEX_SITE_URL` — URL du site utilisée par Convex Auth (doit matcher le domaine déployé) ;
+- `ADMIN_EMAILS` — allowlist admin pour `/admin` (Convex env, fail-closed) ;
+- `AI_KEYS_ENCRYPTION_SECRET` — secret AES-GCM des clés IA (Convex env uniquement, jamais Git) ;
+- `IMOLE_API_KEY`, `IMOLE_BASE_URL`, `IMOLE_MODEL` — fallback env optionnel ; le flux normal passe par DB chiffrée ;
+- `TURNSTILE_SECRET_KEY` / `NEXT_PUBLIC_TURNSTILE_SITE_KEY` — anti-bot public (optionnel, vérif côté Convex si défini) ;
+- `RESEND_API_KEY`, `RESEND_FROM` — reset mot de passe (Phase 7, non bloquant avant).
 
-Les secrets de déploiement doivent être configurés dans l’environnement Convex ou dans le gestionnaire de secrets du déploiement, jamais dans GitHub.
+Les secrets Convex (`ADMIN_EMAILS`, `AI_KEYS_ENCRYPTION_SECRET`, `TURNSTILE_SECRET_KEY`, `RESEND_*`) se configurent via `npx convex env set` — jamais dans Git ni dans Vercel. Seul `NEXT_PUBLIC_CONVEX_URL` va côté Vercel.
 
 ## État du produit
 

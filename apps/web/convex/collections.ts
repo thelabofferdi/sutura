@@ -1,4 +1,4 @@
-import { mutation, query, type QueryCtx } from "./_generated/server";
+import { internalQuery, mutation, query, type QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { v } from "convex/values";
 import { assertOwnedCollection, publicQuestion, publicSettings, requireUserId } from "./lib";
@@ -78,3 +78,5 @@ export const archive = mutation({args:{id:v.id("collections")},handler:async(ctx
   await ctx.db.patch(id,{status:"archived",updatedAt:Date.now()});
   return id;
 }});
+
+export const getInternal = internalQuery({ args: { id: v.id("collections") }, handler: async (ctx, { id }) => ctx.db.get(id) });

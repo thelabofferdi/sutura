@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { type FormEvent, useState } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { BarChart3, ChevronDown, ChevronLeft, ChevronUp, Copy, ExternalLink, Plus, Send, Sparkles, Trash2, XCircle, AlertCircle } from "lucide-react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
@@ -44,11 +44,14 @@ export default function Page() {
   const duplicate = useMutation(api.fashionTests.duplicate);
   const remove = useMutation(api.fashionTests.removeQuestion);
   const reorder = useMutation(api.fashionTests.reorderQuestions);
-  const generate = useMutation(api.fashionTests.generateQuestions);
+  const previewQuestions = useAction(api.questionGeneration.preview);
+  const addQuestion = useMutation(api.fashionTests.addQuestion);
   const [editing, setEditing] = useState<EditableQuestion | undefined>();
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState("");
   const [showSettings, setShowSettings] = useState(false);
+  const [preview, setPreview] = useState<{ questions: Array<{ text: string; type: string; required: boolean; options: string[]; min?: number; max?: number; helpText?: string; modelId?: string }>; provider: string } | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
 
   if (test === undefined) return <p className="p-8 text-center text-prune/60">Chargement…</p>;
   if (!test) return <p className="p-8 text-center text-error">Test introuvable.</p>;
@@ -119,7 +122,7 @@ export default function Page() {
           <div className="mt-6 rounded-[16px] border border-dashed border-line bg-canvas/50 px-6 py-10 text-center">
             <p className="text-sm font-medium text-prune">Aucune question</p>
             <p className="mt-1 text-xs text-prune/50">Ajoute une question pour pouvoir publier.</p>
-            {draft && <div className="mt-4 flex justify-center gap-2"><button onClick={() => setAdding(true)} className="inline-flex items-center gap-1.5 rounded-full bg-framboise px-4 py-2 text-xs font-bold text-white"><Plus className="h-3.5 w-3.5" />Première question</button><button onClick={() => generate({ testId: id }).catch(cause => setError(msg(cause)))} className="inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-4 py-2 text-xs font-bold text-prune hover:bg-canvas"><Sparkles className="h-3.5 w-3.5" />Générer 3 questions</button></div>}
+            {draft && <div className="mt-4 flex justify-center gap-2"><button onClick={() => setAdding(true)} className="inline-flex items-center gap-1.5 rounded-full bg-framboise px-4 py-2 text-xs font-bold text-white"><Plus className="h-3.5 w-3.5" />Première question</button><button disabled={previewLoading} onClick={async () => { setPreviewLoading(true); setError(""); try { const p = await previewQuestions({ testId: id }); setPreview(p); } catch (cause) { setError(msg(cause)); } finally { setPreviewLoading(false); } }} className="inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-4 py-2 text-xs font-bold text-prune hover:bg-canvas disabled:opacity-50"><Sparkles className="h-3.5 w-3.5" />{previewLoading ? "Génération…" : "Générer 3 questions"}</button></div>}
           </div>
         ) : (
           <div className="mt-5 space-y-2">
@@ -148,6 +151,7 @@ export default function Page() {
 
       {adding && <Modal close={() => setAdding(false)}><QuestionForm testId={id} done={() => setAdding(false)} /></Modal>}
       {editing && <Modal close={() => setEditing(undefined)}><QuestionForm testId={id} question={editing} done={() => setEditing(undefined)} /></Modal>}
+      {preview && <Modal close={() => setPreview(null)}><div className="space-y-4"><h2 className="display-font text-2xl">Prévisualisation — {preview.provider === "imole" ? "IA" : "local"}</h2><p className="text-xs text-prune/60">Vérifie avant d’ajouter. Tu pourras modifier ensuite.</p><div className="space-y-2">{preview.questions.map((q, i) => <div key={i} className="rounded-[12px] border border-line bg-canvas/30 p-3"><p className="text-sm font-semibold">{i+1}. {q.text}</p><p className="text-xs text-prune/50">{q.type} · {q.required ? "obligatoire" : "facultative"} {q.options.length ? "· " + q.options.join(", ") : ""}</p></div>)}</div><div className="flex gap-2"><Button onClick={async () => { try { for (const q of preview.questions) { await addQuestion({ testId: id, text: q.text, type: q.type, required: q.required, options: q.options, min: q.min, max: q.max, helpText: q.helpText, modelId: q.modelId as unknown as Id<"models"> | undefined }); } setPreview(null); } catch (cause) { setError(msg(cause)); } }} className="flex-1">Ajouter ces {preview.questions.length} questions</Button><button onClick={() => setPreview(null)} className="rounded-full border border-line px-4 py-2 text-sm">Annuler</button></div></div></Modal>}
     </div>
   );
 }

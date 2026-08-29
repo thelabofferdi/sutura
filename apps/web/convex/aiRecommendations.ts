@@ -1,8 +1,14 @@
 "use node";
 
+import { createHash } from "crypto";
 import { action } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
+import { resolveBaseUrl } from "./aiProvider";
+
+function hashObject(obj: unknown): string {
+  return createHash("sha256").update(JSON.stringify(obj)).digest("hex").slice(0, 16);
+}
 
 type Recommendation = {
   priority: "high" | "medium" | "low";
@@ -47,57 +53,109 @@ export const generate = action({
   handler: async (ctx, args): Promise<Result> => {
     const creatorId = (await ctx.auth.getUserIdentity())?.subject;
     if (!creatorId) throw new Error("Vous devez être connecté.");
-    const data = await ctx.runQuery(internal.recommendationStore.context, { testId: args.testId, creatorId });
-    if (!args.force && data.cached && data.cached.responseCount === data.responseCount) {
+    const data = await ctx.runQuery(internal.recommendationStore.context, { testId: args.testId, creatorId }) as { test: { title: string; description?: string }; responseCount: number; answerSummary: unknown; cached: { responseCount: number; generatedAt: number; inputHash?: string; configHash?: string; aggregationVersion?: string; promptVersion?: string; model?: string; provider: "local" | "imole"; dataPolicy: string; recommendations: Recommendation[] } | null; canCallExternal: boolean; aggregationVersion: string };
+    const pipelinePreview = await ctx.runQuery(internal.admin.getPipelineWithKeyInternal, { step: "recommendations" }) as { enabled: boolean; provider: string; model: string; baseUrl?: string; apiKeyId?: import("./_generated/dataModel").Id<"aiApiKeys">; fallbackToLocal: boolean; promptVersion: string } | null;
+    const inputHash = hashObject({ responseCount: data.responseCount, answerSummary: data.answerSummary, aggregationVersion: data.aggregationVersion });
+    const configHash = hashObject({ provider: pipelinePreview?.provider ?? "auto", model: pipelinePreview?.model ?? "gpt-5.6-luna", baseUrl: pipelinePreview?.baseUrl ?? "", promptVersion: pipelinePreview?.promptVersion ?? "1", enabled: pipelinePreview?.enabled ?? true });
+    if (!args.force && data.cached && data.cached.responseCount === data.responseCount && data.cached.inputHash === inputHash && data.cached.configHash === configHash) {
       return { ...data.cached, generatedAt: new Date(data.cached.generatedAt).toISOString() };
     }
+    // Rate limiting: 10/min and 60/hour per user:test
+    await ctx.runMutation(internal.recommendationStore.checkRateLimit, { key: `${creatorId}:${String(args.testId)}:min`, max: 10, windowMs: 60_000 });
+    await ctx.runMutation(internal.recommendationStore.checkRateLimit, { key: `${creatorId}:${String(args.testId)}:hour`, max: 60, windowMs: 60 * 60_000 });
+    await ctx.runMutation(internal.recommendationStore.acquireLock, { testId: args.testId, creatorId, step: "recommendations", ttlMs: 30_000 });
 
     let provider: "local" | "imole" = "local";
     let recommendations = localRecommendations(data.responseCount);
-    const key = process.env.IMOLE_API_KEY;
-    if (key) {
-      let lastError: unknown = null;
-      for (let attempt = 0; attempt < 2; attempt++) {
-        try {
+    const pipeline = pipelinePreview;
+    const enabled = pipeline?.enabled ?? true;
+    const pipelineProvider = pipeline?.provider ?? "auto";
+    let apiKey: string | undefined = process.env.IMOLE_API_KEY;
+    if (pipeline?.apiKeyId) {
+      const secret = await ctx.runAction(internal.aiSecrets.getDecrypted, { id: pipeline.apiKeyId });
+      apiKey = secret?.rawKey;
+    }
+    const rawBase = pipeline?.baseUrl ?? process.env.IMOLE_BASE_URL ?? "https://api.imole.app/v1";
+    const baseUrl = resolveBaseUrl(pipelineProvider === "local" ? "local" : "imole", rawBase);
+    const model = pipeline?.model ?? process.env.IMOLE_MODEL ?? "gpt-5.6-luna";
+    if (pipeline && !enabled) apiKey = undefined;
+    else if (pipelineProvider === "local") apiKey = undefined;
+    else if (pipelineProvider === "imole" && !apiKey) apiKey = undefined;
+    const canCallExternal = (data as { canCallExternal?: boolean }).canCallExternal ?? data.responseCount >= 5;
+    if (!canCallExternal) apiKey = undefined;
+
+    let finalResult: Result;
+    try {
+      if (apiKey && enabled && baseUrl) {
+        let lastError: unknown = null;
+        let shouldRetry = false;
+        for (let attempt = 0; attempt < 2; attempt++) {
           const controller = new AbortController();
           const timeout = setTimeout(() => controller.abort(), 15000);
-          const response = await fetch(`${process.env.IMOLE_BASE_URL ?? "https://api.imole.app/v1"}/responses`, {
-            method: "POST",
-            headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-            body: JSON.stringify({
-              model: process.env.IMOLE_MODEL ?? "gpt-5.6-luna",
-              input: [
-                { role: "system", content: "Tu aides un créateur de mode. Réponds uniquement en JSON conforme au schéma, avec des conseils prudents fondés sur les données." },
-                { role: "user", content: JSON.stringify({ test: data.test, responseCount: data.responseCount, answerSummary: data.answerSummary }) },
-              ],
-              reasoning: { effort: "medium" },
-              text: { format: { type: "json_schema", name: "sutura_recommendations", strict: true, schema: {
-                type: "object", additionalProperties: false, required: ["recommendations"], properties: {
-                  recommendations: { type: "array", minItems: 1, maxItems: 10, items: { type: "object", additionalProperties: false, required: ["priority", "category", "message"], properties: {
-                    priority: { enum: ["high", "medium", "low"] }, category: { enum: ["production", "pricing", "audience", "content", "risk"] }, message: { type: "string" }, rationale: { type: "string" },
-                  } } },
-                },
-              } } },
-            }),
-            signal: controller.signal,
-          });
-          clearTimeout(timeout);
-          if (!response.ok) throw new Error(`Imọlẹ ${response.status}`);
-          const payload = await response.json();
-          const text = payload.output_text ?? payload.output?.flatMap((item: { content?: Array<{ type: string; text?: string }> }) => item.content ?? []).find((item: { type: string }) => item.type === "output_text")?.text;
-          const parsed = parseRecommendations(JSON.parse(text));
-          if (parsed) { recommendations = parsed; provider = "imole"; break; }
-          else throw new Error("Imọlẹ parsing échoué");
-        } catch (error) {
-          lastError = error;
-          console.error(`Imọlẹ tentative ${attempt + 1} échouée`, error);
-          if (attempt < 1) await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
+          try {
+            const response = await fetch(`${baseUrl}/responses`, {
+              method: "POST",
+              headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model,
+                input: [
+                  { role: "system", content: `Tu aides un créateur de mode. Prompt v${pipeline?.promptVersion ?? "1"}. Réponds uniquement en JSON conforme au schéma, avec des conseils prudents fondés sur les données.` },
+                  { role: "user", content: JSON.stringify({ test: data.test, responseCount: data.responseCount, answerSummary: data.answerSummary }) },
+                ],
+                reasoning: { effort: "medium" },
+                text: { format: { type: "json_schema", name: "sutura_recommendations", strict: true, schema: {
+                  type: "object", additionalProperties: false, required: ["recommendations"], properties: {
+                    recommendations: { type: "array", minItems: 1, maxItems: 10, items: { type: "object", additionalProperties: false, required: ["priority", "category", "message"], properties: {
+                      priority: { enum: ["high", "medium", "low"] }, category: { enum: ["production", "pricing", "audience", "content", "risk"] }, message: { type: "string", maxLength: 500 }, rationale: { type: "string", maxLength: 1000 },
+                    } } },
+                  },
+                } } },
+              }),
+              signal: controller.signal,
+              redirect: "error",
+            } as RequestInit);
+            if (!response.ok) {
+              const retryable = response.status === 408 || response.status === 429 || (response.status >= 500 && response.status < 600);
+              shouldRetry = retryable;
+              throw new Error(`Imọlẹ ${response.status}`);
+            }
+            const payload = await response.json();
+            const text = payload.output_text ?? payload.output?.flatMap((item: { content?: Array<{ type: string; text?: string }> }) => item.content ?? []).find((item: { type: string }) => item.type === "output_text")?.text;
+            if (!text) throw new Error("Imọlẹ réponse vide");
+            const parsed = parseRecommendations(JSON.parse(text));
+            if (parsed) { recommendations = parsed; provider = "imole"; break; }
+            else throw new Error("Imọlẹ parsing échoué");
+          } catch (error) {
+            lastError = error;
+            const msg = String((error as Error)?.message ?? "");
+            const isAbort = msg.includes("abort") || (error as Error)?.name === "AbortError";
+            shouldRetry = shouldRetry || isAbort || msg.includes("429") || msg.includes("408") || msg.includes("5");
+            console.error(`Imọlẹ tentative ${attempt + 1} échouée`, error);
+            if (attempt < 1 && shouldRetry) {
+              const delay = 800 * (attempt + 1) + Math.floor(Math.random() * 200);
+              await new Promise((r) => setTimeout(r, delay));
+              shouldRetry = false;
+            } else if (attempt < 1 && !shouldRetry) {
+              break;
+            }
+          } finally {
+            clearTimeout(timeout);
+          }
         }
+        if (provider === "local" && lastError && (pipeline?.fallbackToLocal ?? true)) console.error("Imọlẹ fallback définitif", lastError);
+        else if (provider === "local" && lastError) throw lastError;
       }
-      if (provider === "local" && lastError) console.error("Imọlẹ fallback définitif", lastError);
+      const usesExternal = provider === "imole";
+      const dataPolicy = usesExternal
+        ? "Statistiques agrégées anonymisées (k=3) et texte du test transmis; aucune identité, réponse libre ou cellule <3 n'est envoyée."
+        : !canCallExternal
+          ? "Échantillon trop petit (<5) : aucune donnée externe transmise, recommandation locale uniquement."
+          : "Seuls le texte du test et des statistiques agrégées anonymisées sont utilisés en local; aucune donnée externe transmise.";
+      await ctx.runMutation(internal.recommendationStore.save, { testId: args.testId, creatorId, responseCount: data.responseCount, provider, dataPolicy, recommendations, inputHash, configHash, aggregationVersion: data.aggregationVersion, promptVersion: pipeline?.promptVersion ?? "1", model });
+      finalResult = { provider, dataPolicy, recommendations, generatedAt: new Date().toISOString() };
+    } finally {
+      await ctx.runMutation(internal.recommendationStore.releaseLock, { testId: args.testId, step: "recommendations" });
     }
-    const dataPolicy = "Seuls le texte du test et des statistiques agrégées sont transmis au moteur IA; aucune identité ni réponse libre de répondant n'est envoyée.";
-    await ctx.runMutation(internal.recommendationStore.save, { testId: args.testId, creatorId, responseCount: data.responseCount, provider, dataPolicy, recommendations });
-    return { provider, dataPolicy, recommendations, generatedAt: new Date().toISOString() };
+    return finalResult;
   },
 });

@@ -1,4 +1,4 @@
-import { mutation, query, type QueryCtx } from "./_generated/server";
+import { internalQuery, mutation, query, type QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { v } from "convex/values";
 import { assertOwnedCollection, assertOwnedTest, publicQuestion, publicSettings, requireUserId } from "./lib";
@@ -224,3 +224,7 @@ export const recordShare = mutation({ args: { id: v.id("fashionTests"), channel:
   if (!channel || channel.length > 40) throw new Error("Canal de partage invalide.");
   return ctx.db.insert("shareEvents", { testId: args.id, channel, createdAt: Date.now() });
 } });
+
+export const getTestInternal = internalQuery({ args: { testId: v.id("fashionTests") }, handler: async (ctx, { testId }) => ctx.db.get(testId) });
+
+export const listModelsInternal = internalQuery({ args: { collectionId: v.id("collections") }, handler: async (ctx, { collectionId }) => ctx.db.query("models").withIndex("by_collection", q => q.eq("collectionId", collectionId)).collect() });

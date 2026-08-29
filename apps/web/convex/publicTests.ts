@@ -1,3 +1,4 @@
+import { internalMutation } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { publicQuestion, publicSettings } from "./lib";
@@ -61,7 +62,7 @@ function isPayloadTooLarge(value: unknown): boolean {
   }
 }
 
-export const submitResponse = mutation({ args: { testId: v.id("fashionTests"), answers: v.any(), startedAt: v.number(), idempotencyKey: v.string(), respondent: v.optional(v.any()), clientKey: v.optional(v.string()) }, handler: async (ctx, args) => {
+export const submitResponse = mutation({ args: { testId: v.id("fashionTests"), answers: v.any(), startedAt: v.number(), idempotencyKey: v.string(), respondent: v.optional(v.any()), clientKey: v.optional(v.string()), turnstileToken: v.optional(v.string()) }, handler: async (ctx, args) => {
   const test = await ctx.db.get(args.testId);
   if (!test || test.status !== "published") throw new Error("Ce test n'est plus disponible.");
   // Garde-fous volume avant validation métier
@@ -71,6 +72,13 @@ export const submitResponse = mutation({ args: { testId: v.id("fashionTests"), a
   const now = Date.now();
   if (args.startedAt > now + 5 * 60_000) throw new Error("La date de début ne peut pas être dans le futur.");
   if (args.startedAt < now - 24 * 60 * 60_000) throw new Error("La date de début est trop ancienne.");
+  const turnstileSecret = process.env.TURNSTILE_SECRET_KEY;
+  if (turnstileSecret) {
+    if (!args.turnstileToken || typeof args.turnstileToken !== "string" || args.turnstileToken.length < 10) throw new Error("Vérification anti-bot requise.");
+    const verifyRes = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: `secret=${encodeURIComponent(turnstileSecret)}&response=${encodeURIComponent(args.turnstileToken)}` });
+    const verifyData = (await verifyRes.json()) as { success: boolean };
+    if (!verifyData.success) throw new Error("Vérification anti-bot échouée.");
+  }
   const existing = await ctx.db.query("publicResponses").withIndex("by_test_idempotency", q => q.eq("testId", args.testId).eq("idempotencyKey", args.idempotencyKey)).unique();
   if (existing) return { id: existing._id, message: test.settings.completionMessage ?? "Merci, ta réponse a bien été enregistrée." };
   const responses = await ctx.db.query("publicResponses").withIndex("by_test", q => q.eq("testId", args.testId)).collect();
@@ -94,7 +102,7 @@ export const submitResponse = mutation({ args: { testId: v.id("fashionTests"), a
   return { id, message: test.settings.completionMessage ?? "Merci, ta réponse a bien été enregistrée." };
 } });
 
-export const cleanupExpiredLimits = mutation({ args: {}, handler: async (ctx) => {
+export const cleanupExpiredLimits = internalMutation({ args: {}, handler: async (ctx) => {
   const cutoff = Date.now() - 24 * 60 * 60_000;
   const expired = await ctx.db.query("publicSubmissionLimits").collect();
   let deleted = 0;

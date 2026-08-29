@@ -1,6 +1,6 @@
 # Sutura — dossier de passation
 
-Mise à jour : 28 août 2026
+Mise à jour : 29 août 2026 — Phase 1-6 + Turnstile backend déployés sur `handsome-leopard-992`
 Branche de développement : `genspark_ai_developer`
 
 ## Décision d’architecture
@@ -18,17 +18,15 @@ Le questionnaire public est accessible sans compte via `/s/:slug`. Les espaces c
 
 ## État livré
 
-Le socle Convex est déployé sur l’environnement de développement `handsome-leopard-992` et couvre :
+Le socle Convex est déployé sur `handsome-leopard-992` (`https://handsome-leopard-992.convex.cloud`) et couvre :
 
-- profils créateur ;
-- collections et modèles ;
-- création, publication et fermeture de tests ;
-- questions typées ;
-- questionnaire public ;
-- réponses idempotentes ;
-- analytics de base ;
-- recommandations IA et fallback local ;
-- partage de tests.
+- profils créateur, collections, modèles, tests, questions, publication, `/s/:slug`, idempotence, analytics ;
+- pipeline admin `/admin` : clés chiffrées AES-GCM v1, audit, allowlist `ADMIN_EMAILS`, nav conditionnelle ;
+- recommandations : agrégation type-aware k=3, seuil externe 5, allowlist host `api.imole.app`, retry filtré, `redirect:error`, rate-limit 10/min 60/h + lock 30s, cache fingerprint `inputHash+configHash`, fallback local ;
+- génération questions : `questionGeneration.preview` (Imole → fallback local) + prévisualisation UI avant insertion ;
+- anti-abus : `publicSubmissionLimits` + `cleanupExpiredLimits` (cron horaire) + vérif Turnstile si `TURNSTILE_SECRET_KEY` défini.
+
+Restant avant production : reset mot de passe Convex Auth (attend clés Resend), widget Turnstile frontend complet, tests Convex/E2E ciblés et runbook prod.
 
 Les validations publiques sont centralisées dans `apps/web/convex/validation.ts` et testées par `apps/web/tests/validation.test.ts`.
 
