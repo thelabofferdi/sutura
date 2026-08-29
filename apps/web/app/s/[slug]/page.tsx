@@ -7,6 +7,7 @@ import { useMutation, useQuery } from "convex/react";
 import { ArrowRight, Check, ChevronLeft } from "lucide-react";
 import { api } from "@/convex/_generated/api";
 import type { FashionModel, Question } from "@/lib/types";
+import { TurnstileWidget } from "@/components/turnstile";
 
 const labels: Record<string, string> = {
   firstName: "Prénom",
@@ -40,6 +41,9 @@ export default function Page() {
   const [sending, setSending] = useState(false);
   const [done, setDone] = useState("");
   const [error, setError] = useState("");
+  const siteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? "";
+  const [turnstileToken, setTurnstileToken] = useState("");
+  const needsTurnstile = Boolean(siteKey);
 
   const needs = Boolean(test && !test.settings.anonymousResponses && test.settings.collectRespondentProfile.length);
   const total = (test?.questions.length ?? 0) + (needs ? 1 : 0);
@@ -69,10 +73,11 @@ export default function Page() {
 
   async function finish() {
     if (sending) return;
+    if (needsTurnstile && !turnstileToken) { setError("Vérification anti-bot requise. Coche la case."); return; }
     setSending(true);
     setError("");
     try {
-      const r = await submit({ testId: test!.id, respondent: needs ? respondent : undefined, answers, startedAt, idempotencyKey: key, clientKey });
+      const r = await submit({ testId: test!.id, respondent: needs ? respondent : undefined, answers, startedAt, idempotencyKey: key, clientKey, turnstileToken: needsTurnstile ? turnstileToken : undefined });
       setDone(r.message);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Envoi impossible.");
@@ -119,6 +124,7 @@ export default function Page() {
             {error && (
               <p className="mt-5 rounded-[12px] border border-error/30 bg-white px-4 py-3 text-sm text-error" role="alert">{error}</p>
             )}
+            {needsTurnstile && last && <TurnstileWidget siteKey={siteKey} onToken={setTurnstileToken} />}
             <div className="mt-10 flex items-center justify-between">
               {step > 0 ? (
                 <button type="button" onClick={() => setStep((s) => s - 1)} className="inline-flex items-center gap-1 text-sm font-semibold text-prune" aria-label="Revenir à la question précédente">
